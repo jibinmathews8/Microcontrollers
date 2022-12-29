@@ -1,0 +1,152 @@
+#include "msp430.h"                     ; #define controlled include file
+; This example illustrates the use of the 7-segment display with multiple
+; digits. This program counts up in hexadecimal.
+
+        NAME    main                    ; module name
+
+        PUBLIC  main                    ; make the main label vissible
+                                        ; outside this module          
+
+; Somewhat control how fast to count.
+#define COUNT_DELAY     0x05
+
+; Define labels to the memory locations that hold the values to display.
+#define THOU            0x200
+#define HUND            0x201
+#define TENS            0x202
+#define ONES            0x203
+
+#define DIS1            0x01
+#define DIS2            0x02
+#define DIS3            0x04
+#define DIS4            0x08
+#define ALLD            0xF
+
+#define SEG_DELAY       0x5DC
+
+        ORG     0FFFEh
+        DC16    init                    ; set reset vector to 'init' label
+
+        RSEG    CSTACK                  ; pre-declaration of segment
+        RSEG    CODE                    ; place program in 'CODE' segment
+
+init:   MOV     #SFE(CSTACK), SP        ; set up stack
+        MOV.W   #WDTPW+WDTHOLD,&WDTCTL  ; Stop watchdog timer
+                
+        MOV.B   #0xFF, &P1DIR           ; Configure the entirety of P1 as output
+              
+        ; Make sure the pins are set to GPIO mode.
+        MOV.B   #0x00, &P1SEL
+        MOV.B   #0x00, &P1SEL2
+        
+        ; Configure P2.0,1,2, and 3 as outputs
+        MOV.B   #00001111b, &P2DIR
+
+        ; Make sure the pins are set to GPIO mode.
+        MOV.B   #0x00, &P2SEL
+        MOV.B   #0x00, &P2SEL2
+        
+main:   NOP                             ; main program
+
+        ; Make sure all displays are off
+        BIS.B   #ALLD, &P2OUT
+        
+        ; Initialize our idexes to 0x00
+        MOV.B   #0x00, &ONES
+        MOV.B   #0x00, &TENS
+        MOV.B   #0x00, &HUND
+        MOV.B   #0x00, &THOU
+
+        ; Initialize the counter delay value.
+        MOV.W   #COUNT_DELAY, R5
+
+displayLoop:
+        DEC.W   R5
+        JNZ     Draw
+        ; Execute all the magic code to perform the multiple digit count.
+        CALL    #doCount
+        MOV.W   #COUNT_DELAY, R5        ; Reset the count back to the original value.
+
+Draw:
+        ; Ones place.     
+        BIS.B   #ALLD, &P2OUT           ; Turn off all displays
+        BIC.B   #DIS4, &P2OUT           ; Turn on DIS4
+        MOV.B   &ONES, R4               ; Move the number to display to R4
+        MOV.B   ZERO(R4), &P1OUT        ; Get the pattern from the lookup table
+        MOV.W   #SEG_DELAY, R4          ; Pass the delay amount to DelayMS
+                                        ; though R4
+        CALL    #DelayMS                                
+        
+        BIS.B   #ALLD, &P2OUT           ; Turn off all displays
+        BIC.B   #DIS3, &P2OUT           ; Turn on DIS3
+        MOV.B   &TENS, R4               ; Move the number to display to R4
+        MOV.B   ZERO(R4), &P1OUT        ; Get the pattern from the lookup table
+        MOV.W   #SEG_DELAY, R4          ; Pass the delay amount to DelayMS
+                                        ; though R4
+        CALL    #DelayMS
+        
+        BIS.B   #ALLD, &P2OUT           ; Turn off all displays
+        BIC.B   #DIS2, &P2OUT           ; Turn on DIS2
+        MOV.B   &HUND, R4               ; Move the number to display to R4
+        MOV.B   ZERO(R4), &P1OUT        ; Get the pattern from the lookup table
+        MOV.W   #SEG_DELAY, R4          ; Pass the delay amount to DelayMS
+                                        ; though R4
+        CALL    #DelayMS
+        
+        BIS.B   #ALLD, &P2OUT           ; Turn off all displays
+        BIC.B   #DIS1, &P2OUT           ; Turn on DIS1
+        MOV.B   &THOU, R4               ; Move the number to display to R4
+        MOV.B   ZERO(R4), &P1OUT        ; Get the pattern from the lookup table        
+        MOV.W   #SEG_DELAY, R4          ; Pass the delay amount to DelayMS
+                                        ; though R4.
+        CALL    #DelayMS
+        
+        JMP     displayLoop                           
+
+doCount:
+        INC.B   &ONES                   ; Increment the ones place
+        BIT.B   #0x10, &ONES            ; Test to see if the LS nibble overflowed
+        JZ      NI                      ; jump to the end if the bit did not overflow
+        AND.B   #0xF, &ONES             ; mask off the LS nibble to restart count
+      
+        INC.B   &TENS
+        BIT.B   #0x10, &TENS             
+        JZ      NI                      
+        AND.B   #0xF, &TENS
+        
+        INC.B   &HUND
+        BIT.B   #0x10, &HUND
+        JZ      NI
+        AND.B   #0xF, &HUND
+        
+        INC.B   &THOU                   ; Increment the thousands place.
+        AND.B   #0xF, &THOU            ; Mask off everything above the LS nibble
+NI:     RET
+
+DelayMS:
+        DEC     R4
+        JNZ     DelayMS
+        RET
+
+; Lookup table        
+ZERO:   DC8    ~0x3F
+ONE:    DC8    ~0x06
+TWO:    DC8    ~0x5B
+THREE:  DC8    ~0x4F
+FOUR:   DC8    ~0x66
+FIVE:   DC8    ~0x6D
+SIX:    DC8    ~0x7D
+SEVEN:  DC8    ~0x07
+EIGHT:  DC8    ~0x7F
+NINE:   DC8    ~0x67
+LA:     DC8    ~0x77
+LB:     DC8    ~0x7C
+LC:     DC8    ~0x39
+LD:     DC8    ~0x5E
+LE:     DC8    ~0x79
+LF:     DC8    ~0x71
+COLON:  DC8    ~0x80
+
+        END
+
+

@@ -1,0 +1,127 @@
+#include "msp430.h"                     ; #define controlled include file
+; This example illustrates simple use of the 7-segment display.
+; When P2.5 transitions to low, a counter is incremented and displayed on
+; a 7-segment display. The switch uses port interrupts. No debouncing.
+
+        NAME    main                    ; module name
+
+        PUBLIC  main                    ; make the main label vissible
+                                        ; outside this module                                        
+#define btnFlag        0x200
+
+#define DIS1 0x01
+#define DIS2 0x02
+#define DIS3 0x04
+#define DIS4 0x08
+
+        ORG     0FFFEh
+        DC16    init                    ; set reset vector to 'init' label
+
+        ORG     0FFE6h                  ; Set the address of the P2 ISR in the 
+                                        ; interrupt vector table.
+        DC16    P2ISR                   
+
+        RSEG    CSTACK                  ; pre-declaration of segment
+        RSEG    CODE                    ; place program in 'CODE' segment
+
+init:   MOV     #SFE(CSTACK), SP        ; set up stack
+        MOV.W   #WDTPW+WDTHOLD,&WDTCTL  ; Stop watchdog timer
+        
+        MOV.B   #0xFF, &P1DIR           ; Configure the entirety of P1 as output
+        
+                ; Make sure the pins are set to GPIO mode.
+        MOV.B   #0x00, &P1SEL
+        MOV.B   #0x00, &P1SEL2
+        
+        ; Configure P2.0,1,2, and 3 as outputs
+        MOV.B   #00001111b, &P2DIR
+        MOV.B   #0xE0, &P2REN    ;turn on the internal resistor
+        MOV.B   #0xE0, &P2OUT
+                
+                ; Make sure the pins are set to GPIO mode.
+        MOV.B   #0x00, &P2SEL
+        MOV.B   #0x00, &P2SEL2
+        
+        ; Clear the interrupt flag before enabling interrupts.
+        BIC.B   #0x20, &P2IFG
+        
+        ; Enable interrupts on P2.5 whenever rising edge occurs.
+        BIS.B   #0x20, &P2IE
+        ;BIS.B   #0x20, &P2IES
+        
+        ; Reset the button flag
+        MOV.B   #0x00, &btnFlag
+        
+        ; General interrupt enabled.
+        EINT
+        
+main:   NOP                             ; main program
+
+        ; Make sure all displays are off
+        BIS.B   #0xF, &P2OUT
+
+        ; Make Sure P1OUT is initialized with the value thet would display 
+        ; the number zero.
+        MOV.B   &ZERO, &P1OUT
+
+        ; Enable DIS4
+        BIC.B   #DIS4, &P2OUT
+        
+        ; Set the value of R4 equal to 0x00
+        MOV.B   #0x00, R4
+        
+lockLoop:
+        TST.B   &btnFlag
+        JZ      lockLoop
+        MOV.B   #0x00, &btnFlag         ; Reset the btnFlag
+
+        INC.B   R4                      ; Increment the R4 everytime
+                                        ; the switch is pressed.
+        AND.B   #0x0F, R4               ; Make sure the value in R4 never
+                                        ; exceeds 0x0F.
+                                        
+        MOV.B   ZERO(R4), &P1OUT         ; Change the number on the seven segment
+                                        ; display.
+                                     
+        JMP     lockLoop                           
+
+DelayMS:
+        PUSH    R4
+        MOV.W   #0xFFFF, R4
+loop:
+        DEC     R4
+        JNZ     loop
+        POP     R4
+        RET
+
+; Lookup table        
+ZERO:   DC8    ~0x3F
+ONE:    DC8    ~0x06
+TWO:    DC8    ~0x5B
+THREE:  DC8    ~0x4F
+FOUR:   DC8    ~0x66
+FIVE:   DC8    ~0x6D
+SIX:    DC8    ~0x7D
+SEVEN:  DC8    ~0x07
+EIGHT:  DC8    ~0x7F
+NINE:   DC8    ~0x67
+LA:     DC8    ~0x77
+LB:     DC8    ~0x7C
+LC:     DC8    ~0x39
+LD:     DC8    ~0x5E
+LE:     DC8    ~0x79
+LF:     DC8    ~0x71
+COLON:  DC8    ~0x80
+
+PAD:    DC8    0x00
+
+P2ISR:
+        ; Set the button flag signaling the main loop that the button has
+        ; been pressed.
+        MOV.B   #0x01, &btnFlag
+        
+        ; Clear the interrupt flag before returning from interrupt.
+        BIC.B   #0x20, &P2IFG 
+        RETI
+
+        END

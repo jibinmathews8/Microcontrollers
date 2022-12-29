@@ -1,0 +1,84 @@
+#include "msp430.h"                     ; #define controlled include file
+; This example illustrates simple use of the 7-segment display
+; Code tests the right most display by counting from 0 to f
+
+        NAME    main                    ; module name
+
+        PUBLIC  main                    ; make the main label vissible
+                                        ; outside this module                                        
+#define DIS1 0x01
+#define DIS2 0x02
+#define DIS3 0x04
+#define DIS4 0x08
+
+        ORG     0FFFEh
+        DC16    init                    ; set reset vector to 'init' label
+
+        RSEG    CSTACK                  ; pre-declaration of segment
+        RSEG    CODE                    ; place program in 'CODE' segment
+
+init:   MOV     #SFE(CSTACK), SP        ; set up stack
+        MOV.W   #WDTPW+WDTHOLD,&WDTCTL  ; Stop watchdog timer
+        
+        MOV.B   #0xFF, &P1DIR           ; Configure the entirety of P1 as output
+        
+        ; Make sure the pins are set to GPIO mode.
+        MOV.B   #0x00, &P1SEL
+        MOV.B   #0x00, &P1SEL2
+
+        ; Configure P2.0,1,2, and 3 as outputs
+        MOV.B   #00001111b, &P2DIR
+
+        ; Make sure the pins are set to GPIO mode.
+        MOV.B   #0x00, &P2SEL
+        MOV.B   #0x00, &P2SEL2
+        
+main:   NOP                             ; main program
+
+        ; Make sure all displays are off
+        BIS.B   #0xF, &P2OUT
+
+        ; Enable DIS4
+        BIC.B   #DIS4, &P2OUT
+        
+        ; Set the value of R4 equal to 0x00
+        MOV.B   #0x00, R4
+        
+countLoop:
+        MOV.B   ZERO(R4), &P1OUT
+        INC.B   R4
+        AND.B   #0x0F, R4
+        CALL    #DelayMS
+        CALL    #DelayMS
+        JMP     countLoop                           
+
+DelayMS:
+        PUSH    R4
+        MOV.W   #0xFFFF, R4
+loop:
+        DEC     R4
+        JNZ     loop
+        POP     R4
+        RET
+
+; Lookup table        
+ZERO:   DC8    ~0x3F
+ONE:    DC8    ~0x06
+TWO:    DC8    ~0x5B
+THREE:  DC8    ~0x4F
+FOUR:   DC8    ~0x66
+FIVE:   DC8    ~0x6D
+SIX:    DC8    ~0x7D
+SEVEN:  DC8    ~0x07
+EIGHT:  DC8    ~0x7F
+NINE:   DC8    ~0x67
+LA:     DC8    ~0x77
+LB:     DC8    ~0x7C
+LC:     DC8    ~0x39
+LD:     DC8    ~0x5E
+LE:     DC8    ~0x79
+LF:     DC8    ~0x71
+COLON:  DC8    ~0x80
+
+        END
+

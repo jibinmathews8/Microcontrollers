@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workspace>
+    <project>
+        <path>$WS_DIR$\7-seg_1.ewp</path>
+    </project>
+    <project>
+        <path>$WS_DIR$\..\7-seg_2\7-seg_2.ewp</path>
+    </project>
+    <project>
+        <path>$WS_DIR$\..\7-seg_3\7-seg_3.ewp</path>
+    </project>
+    <project>
+        <path>$WS_DIR$\..\7-seg_4\7-seg_4.ewp</path>
+    </project>
+    <project>
+        <path>$WS_DIR$\..\Helm_7-seg_Test_Code\Test_Code.ewp</path>
+    </project>
+    <batchBuild />
+</workspace>

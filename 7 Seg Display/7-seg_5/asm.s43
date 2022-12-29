@@ -1,0 +1,65 @@
+#include "msp430.h"                     ; #define controlled include file
+
+        NAME    main                    ; module name
+
+        PUBLIC  main                    ; make the main label vissible
+                                        ; outside this module
+; Control how fast to count.
+#define COUNT_DELAY     0x0005
+
+; Define labels to the memory locations that hold the values to display.
+#define THOU            0x200
+#define HUND            0x201
+#define TENS            0x202
+#define ONES            0x203
+
+        ORG     0FFFEh
+        DC16    init                    ; set reset vector to 'init' label
+
+        RSEG    CSTACK                  ; pre-declaration of segment
+        RSEG    CODE                    ; place program in 'CODE' segment
+
+init:   MOV     #SFE(CSTACK), SP        ; set up stack
+        MOV.W   #WDTPW+WDTHOLD,&WDTCTL  ; Stop watchdog timer
+
+        ; Initialize the counter delay value.
+        MOV.W   #COUNT_DELAY, R5
+
+        ; Initialize our idexes to 0x00
+        MOV.B   #0x00, &ONES
+        MOV.B   #0x00, &TENS
+        MOV.B   #0x00, &HUND
+        MOV.B   #0x00, &THOU
+        
+main:   NOP                             ; main program  
+        
+        DEC.W   R5
+        JNZ     Cont
+        ; Execute all the magic code to perform the multiple digit count.
+        CALL    #doCount
+        MOV.W   #COUNT_DELAY, R5        ; Reset the count back to the original value.
+                
+Cont:  JMP main                           ; jump to current location '$'
+                                        ; (endless loop)
+
+doCount:
+        INC.B   &ONES                   ; Increment the ones place.
+        BIT.B   #0x10, &ONES            ; Test to see if the LS nibble overflowed.
+        JZ      NI                      ; jump to the end if the nibble did not overflow.
+        AND.B   #0x0F, &ONES            ; If it did overflow mask the excess and continue to the nect line.
+        
+        INC.B   &TENS
+        BIT.B   #0x10, &TENS
+        JZ      NI
+        AND.B   #0x0F, &TENS
+        
+        INC.B   &HUND
+        BIT.B   #0x10, &HUND
+        JZ      NI
+        AND.B   #0x0F, &HUND
+        
+        INC.B   &THOU                   ; Increment the thousands place.
+        AND.B   #0x0F, &THOU            ; Mask off everything above the LS nibble.
+NI:     RET
+
+        END
