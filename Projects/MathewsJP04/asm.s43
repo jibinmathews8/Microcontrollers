@@ -1,0 +1,275 @@
+;*******************************************************************************
+; This code provides the starting framework for creating a stopwatch
+; Timer A_0 has been configured to update the display upon CCR0 interrupt
+; Timer A_1 has been configured so that an interrupt occurs every 0.1 s 
+; The P2 interrupt is configured for the 3 push buttons
+; The 1 MHz calibrated clock is setup for use with the Timers
+; Adapted partially from Dr. Helm's DemoStopWatchFramework program
+;*******************************************************************************
+#include "msp430.h"                     ; include file
+
+        NAME    main                    ; module name
+        PUBLIC  main                    ; external visibility of main label
+;Defining Variables**************************************************************        
+                                        ; define variables to be used in memory
+                ORG    0x300
+ten_ms          DC8    0x300              ; 0x300 ten_ms value located here (0x300)
+hund_ms         DC8    0x301              ; 0x301                      
+seconds         DC8    0x302              ; .. 
+ten_sec         DC8    0x303              ; ..
+countm          DC8    0x304
+PB1M            DC8    0x305              ; Start
+PB2M            DC8    0x306              ; Pause
+PB3M            DC8    0x307              ; Reset
+CurrentDigit    DC8    0x308
+;*******************************************************************************
+                                        ; setup interrupt vector locations
+        ORG     0FFFEh
+        DC16    init                    ; reset vector to 'init'
+        ORG     0xFFE6
+        DC16    Port_2_ISR              ; port 2 interrupt vector
+        ORG     0xFFF2
+        DC16    TA_0_ISR                ; timer 0 interrupt vector
+        ORG     0xFFFA
+        DC16    TA_1_ISR                ; timer 1 interrupt vector 
+        
+        RSEG    CSTACK                  ; pre-declaration of segment
+        RSEG    CODE                    ; place program in 'CODE' segment
+;Defining Port Display Pins****************************************************                                                
+                                        ; define display
+        #define DIS1    0x01
+        #define DIS2    0x02
+        #define DIS3    0x04
+        #define DIS4    0x08
+        #define ALLD    0xF
+        #define COLN    0x10
+                                        ; define button locations
+        #define PB1     0x20     
+        #define PB2     0x80
+        #define PB3     0x40
+                                        ; define timer count values (Change timing here) Timer 0 has an issue (Look into it)
+        #define TA_0_count      50000
+        #define TA_1_count      2000
+                                        ; number of 0.1 s intervals in 1 s
+        #define max_count       10
+        
+        
+        
+        
+        
+        
+        
+        
+;*******************************************************************************
+;               PROGRAM START
+;*******************************************************************************
+                                        ; code in init label for initial setup  
+init:   MOV     #SFE(CSTACK), SP        ; set up stack (end of RAM)
+        MOV.W   #WDTPW+WDTHOLD, &WDTCTL ; stop WDT
+       
+        MOV.B   #0xFF, &P1DIR           ; all P1 output
+        MOV.B   #ALLD+COLN, &P2DIR      ; lower 5 bits outputs (displays + colon)
+        MOV.B   #PB1+PB2+PB3, &P2REN    ; enable pullup/down resistor
+        MOV.B   #PB1+PB2+PB3, &P2OUT    ; set pullup resistor 
+
+        BIS.B   #0xFF, &P1OUT           ; clear character display (all off)
+        BIS.B   #ALLD+COLN, &P2OUT     ; clear all displays and colon
+
+        BIC.B   #0xFF, &P1SEL           ; all P1 GPIO mode
+        BIC.B   #0xFF, &P1SEL2          
+        BIC.B   #0xFF, &P2SEL           ; all P2 GPIO mode
+        BIC.B   #0xFF, &P2SEL2
+        
+        BIS.B   #PB1+PB2+PB3, &P2IE     ; enable P2 interrupt for buttons
+        BIS.B   #PB1+PB2+PB3, &P2IES
+        CLR.B   &P2IFG                  ; clear interrupt flag
+        
+        CLR.B   &DCOCTL;                ; setup calibrated 1 MHz clock
+        MOV.B   &CALBC1_1MHZ, &BCSCTL1
+        MOV.B   &CALDCO_1MHZ, &DCOCTL
+        
+        
+        
+        
+        
+        MOV.W   #TA_0_count, &TA0CCR0   ; setup T0 and interrupt
+        ;MOV.W   #TASSEL_2+ID_0+MC_1, &TACTL ; Up mode
+        MOV.W   #TASSEL_2+ID_0+MC_2, &TACTL ; Continous
+        MOV.W   #CCIE, &TA0CCTL0
+        BIC.W   #TAIFG, &TA0CTL          ; clear interrupt flag 
+                
+        MOV.W   #TA_1_count, &TA1CCR0   ; setup T1 and interrupt
+        ;MOV.W   #TASSEL_2+ID_1+MC_1, &TA1CTL ; Up Mode
+        MOV.W   #TASSEL_2+ID_1+MC_2, &TA1CTL ; continous
+        MOV.W   #CCIE, &TA1CCTL0
+        BIC.W   #TAIFG, &TA1CTL         ; clear interrupt flag
+
+
+CLR.B   &ten_ms                 ; make sure variables are cleared
+        CLR.B   &hund_ms
+        CLR.B   &seconds
+        CLR.B   &ten_sec
+        CLR.B   &countm
+        CLR.B   &PB1M
+        CLR.B   &PB2M
+        CLR.B   &PB3M
+        CLR.B   &CurrentDigit
+        
+        
+
+        
+        
+        EINT
+;******************************************************************************
+main:   NOP                             ; main program  
+        BIC.B   #ALLD+COLN, &P1OUT
+        CMP.B   #0x01, &PB1M            ; check PB1 pushed flag
+        JEQ     PB1M_set
+        CMP.B   #0x01, &PB2M            ; check PB2 pushed flag                   
+        JEQ     PB2M_set
+        CMP.B   #0x01, &PB3M            ; check PB3 pushed flag
+        JEQ     PB3M_set
+        JMP     Done                   
+
+; Put functions in this to start clear flag for both (right most Button)
+
+PB1M_set:                               ; set values when PB1 selected (rightmost)
+        MOV.B   #0x1, &ten_ms           ; this only serves as an example for
+        MOV.B   #0x2, &hund_ms          ; when PB1 is selected
+        MOV.B   #0x3, &seconds          ; ***for the stopwatch, this will be start
+        MOV.B   #0x4, &ten_sec
+        CLR.B   &PB1M                   ; setup is complete, reset pushed flag
+        JMP     Done
+
+
+; Put functions in this to stop (Middle Button)
+
+PB2M_set:                               ; set values when PB2 selected (center)
+        MOV.B   #0x5, &ten_ms           ; ***for the stopwatch this will be stop
+        MOV.B   #0x6, &hund_ms
+        MOV.B   #0x7, &seconds
+        MOV.B   #0x8, &ten_sec
+        CLR.B   &PB2M                   ; setup is complete, reset pushed flag
+        JMP     Done
+
+
+; Pause Button (Left)
+
+PB3M_set:                               ; set values when PB3 selected (leftmost)
+        MOV.B   #0x0, &ten_ms           ; ***for the stopwatch, this will be reset
+        MOV.B   #0x0, &hund_ms
+        MOV.B   #0x0, &seconds
+        MOV.B   #0x0, &ten_sec
+        CLR.B   &PB3M                   ; setup is compelte reset pushed flag
+        JMP     Done
+;*******************************************************************************
+
+Done:   
+
+
+
+
+
+
+
+
+
+
+
+JMP     main        
+;*******************************************************************************
+;               END OF MAIN - SUBROUTINES
+;*******************************************************************************
+Draw:                                   ; code for drawing display (Draw 1 digit at a timeper interrupt)
+        BIS.B   #ALLD, &P2OUT
+       
+        CMP.B   #0x0, &CurrentDigit     ; check which digit to display
+        JEQ     WriteDig1               ; only one digit displayed per interrupt
+        CMP.B   #0x1, &CurrentDigit
+        JEQ     WriteDig2
+        CMP.B   #0x2, &CurrentDigit
+        JEQ     WriteDig3
+        CMP.B   #0x3, &CurrentDigit
+        JEQ     WriteDig4
+
+
+; If none of buttons are pressed
+WriteDig1:                              ; write digit one
+        BIC.B   #DIS4, &P2OUT
+        MOV.B   &ten_ms, R4
+        MOV.B   ZERO(R4), &P1OUT
+        JMP     DoneNow
+WriteDig2:                              ; write digit two
+        BIC.B   #DIS3, &P2OUT
+        MOV.B   &hund_ms, R4
+        MOV.B   ZERO(R4), &P1OUT
+        JMP     DoneNow
+WriteDig3:                              ; write digit three
+        BIC.B   #DIS2, &P2OUT
+        MOV.B   &seconds, R4
+        MOV.B   ZERO(R4), &P1OUT
+        JMP     DoneNow
+WriteDig4:                              ; write digit four
+        BIC.B   #DIS1, &P2OUT
+        MOV.B   &ten_sec, R4
+        MOV.B   ZERO(R4), &P1OUT
+        JMP     DoneNow
+DoneNow:                                ; writing is complete
+        INC.B   &CurrentDigit           
+        CMP.B   #0x4, &CurrentDigit     ; check to see if all digits have been displayed
+        JL      DoneWriting             ; if not skip reset of current digit
+        CLR.B   &CurrentDigit           ; if yes reset the current digit flag
+        XOR.B   #COLN, &P2OUT          ; Set up Colon 
+
+; After 4 digits colon turns on and remains on until next 4 digits
+DoneWriting:
+        RET
+;*******************************************************************************  
+;               INTERRUPT SERVICE ROUTINES
+;*******************************************************************************                      
+Port_2_ISR:                             ; interrupt occured on P2 (Pushbuttons)
+        BIT.B   #PB1, &P2IFG            ; check which button was pressed
+        JNZ     PB1_set                 ; jump to corresponding case
+        BIT.B   #PB2, &P2IFG
+        JNZ     PB2_set
+        BIT.B   #PB3, &P2IFG
+        JNZ     PB3_set
+PB1_set:                                ; PB1 was pressed set flag
+        BIS.B   #0x01, &PB1M
+        JMP     T0ISR_finish
+PB2_set:                                ; PB2 was pressed set flag
+        BIS.B   #0x01, &PB2M
+        JMP     T0ISR_finish
+PB3_set:                                ; PB3 was pressed set flag
+        BIS.B   #0x01, &PB3M    
+        JMP     T0ISR_finish
+T0ISR_finish:                           ; port interrupt finished clear flag
+        CLR.B   &P2IFG 
+        RETI
+;*******************************************************************************        
+TA_0_ISR:                               ; interrupt occured TA_0
+        CALL    #Draw                   ; call draw function for display (Draw everytime/display digits)
+          
+        RETI
+;*******************************************************************************        
+TA_1_ISR:                               ; interrupt occured TA_1
+        INC.B   &ten_ms               ; timer updates every 0.1 s 
+                                        ; likely need to do something here
+                                        ; Timer that counts every 100ms 
+      
+        RETI
+;*******************************************************************************
+;               7-SEGMENT DISPLAY VALUES
+;*******************************************************************************
+ZERO:   DC8    ~0x3F
+ONE:    DC8    ~0x06
+TWO:    DC8    ~0x5B
+THREE:  DC8    ~0x4F
+FOUR:   DC8    ~0x66
+FIVE:   DC8    ~0x6D
+SIX:    DC8    ~0x7D
+SEVEN:  DC8    ~0x07
+EIGHT:  DC8    ~0x7F
+NINE:   DC8    ~0x67
+
+        END

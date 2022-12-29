@@ -1,0 +1,47 @@
+; Jibin Mathews
+; ECE 3362-002
+; 2/15/2021
+; Program allows user to multiply 2 numbers stored in R8 and R9 and outputs result in R7 and 0x4FE       
+
+
+#include "msp430.h"                     ; #define controlled include file
+
+        NAME    main                    ; module name
+        PUBLIC  main                    ; make the main label visible
+                                        ; outside this module
+        ORG     0FFFEh
+        DC16    main               ; set reset vector to 'init' label
+        
+        #define NUM1         0x2A0 
+        ORG     NUM1               ; Set Data as NUM1
+        DC8    16                  ; Num1
+        
+        
+        #define NUM2         0x2B0 
+        ORG     NUM2               ; Set Data as NUM2
+        DC8     8                  ; Num2
+
+        RSEG    CODE                    ; place program in 'CODE' segment
+
+main:   NOP                             ; main program
+        MOV.W   #WDTPW+WDTHOLD,&WDTCTL  ; Turn off WDT
+
+        call #multiplyinitialize
+        JMP     $
+        
+multiplyinitialize:                    ; Initialize Multiply function
+  
+        MOV.B   &NUM1, R8               ; Declare values of Num1 and Num2 in registers
+        MOV.B   &NUM2, R9
+        MOV.W   R8, R6                  ; Move R8 into R6 in order to set up counter
+        MOV.W   #0, R7                  ; Initialize the resultant(R7) to zero
+
+multiply:                              ; Multiply Function Loop
+        ADD.B   R9, R7                  ; Keeps adding num2 to resultant num1 times
+        DEC.B   R6                      ; Deccrement num1 until zero
+        JNZ     multiply                ; JNZ (Jump if not zero) keeps jumping to multiply function until R6 is decremented to 0
+        MOV.B   R7, &0x4FE              ; After exiting the loop (R6 decremented to 0) R7 prints to memory address (0x4FE)
+        RET
+        
+        
+        END
