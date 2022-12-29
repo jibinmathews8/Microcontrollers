@@ -1,0 +1,281 @@
+; Jibin Mathews
+; ECE 3362 002
+; Project 4
+; Program resembles a stopwatch which can be Played/ Paused/ Reset
+; I got the code to display 00:00 without flickering but ran into some trouble with the count function
+; Code was counting when Play button was pressed but Incorrect characters appeared on the 7 seg display
+
+#include "msp430.h"                     ; include file
+
+        NAME    main                    ; module name
+        PUBLIC  main                    ; external visibility of main label
+; 1. Define Each Digit and Button                                       
+                ORG    0x300
+ten_ms          DC8    0x300              ; 0x300
+hund_ms         DC8    0x301              ; 0x301                      
+seconds         DC8    0x302             ; .. 
+ten_sec         DC8    0x303             ; ..
+countm          DC8    0x304
+PB1M            DC8    0x305
+PB2M            DC8    0x306
+PB3M            DC8    0x307
+CurrentDigit    DC8    0x308
+
+; 2. Set up Interrupts
+        ORG     0FFFEh
+        DC16    init                    ; reset vector to 'init'
+        ORG     0xFFE6
+        DC16    Port_2_ISR              ; port 2 interrupt vector
+        ORG     0xFFF2
+        DC16    TA_0_ISR                ; timer 0 interrupt vector
+        ORG     0xFFFA
+        DC16    TA_1_ISR                ; timer 1 interrupt vector 
+        
+        RSEG    CSTACK                  ; pre-declaration of segment
+        RSEG    CODE                    ; place program in 'CODE' segment
+
+; 3. Define displays                                                                                
+        #define DIS1    0x01
+        #define DIS2    0x02
+        #define DIS3    0x04
+        #define DIS4    0x08
+        #define ALLD    0xF
+        #define COLN    0x10
+; Define buttons
+        #define PB1     0x20     
+        #define PB2     0x80
+        #define PB3     0x40
+        
+ ; Define timer count values (Lowering TA_0_count caused the board to minimize "flickering")
+        #define TA_0_count      1000    
+        #define TA_1_count      50000
+                                        ; number of 0.1 s intervals in 1 s
+        #define max_count       10
+;*******************************************************************************
+;               PROGRAM START
+;*******************************************************************************
+                                        ; code in init label for initial setup  
+init:   MOV     #SFE(CSTACK), SP        ; set up stack (end of RAM)
+        MOV.W   #WDTPW+WDTHOLD, &WDTCTL ; stop WDT
+       
+        MOV.B   #0xFF, &P1DIR           ; all P1 output
+        MOV.B   #ALLD+COLN, &P2DIR      ; lower 5 bits outputs (displays + colon)
+        MOV.B   #PB1+PB2+PB3, &P2REN    ; enable pullup/down resistor
+        MOV.B   #PB1+PB2+PB3, &P2OUT    ; set pullup resistor 
+
+        BIS.B   #0xFF, &P1OUT           ; clear character display (all off)
+        BIS.B   #ALLD+COLN, &P2OUT     ; clear all displays and colon
+
+        BIC.B   #0xFF, &P1SEL           ; all P1 GPIO mode
+        BIC.B   #0xFF, &P1SEL2          
+        BIC.B   #0xFF, &P2SEL           ; all P2 GPIO mode
+        BIC.B   #0xFF, &P2SEL2
+        
+        BIS.B   #PB1+PB2+PB3, &P2IE     ; enable P2 interrupt for buttons
+        BIS.B   #PB1+PB2+PB3, &P2IES
+        CLR.B   &P2IFG                  ; clear interrupt flag
+        
+        CLR.B   &DCOCTL;                ; setup calibrated 1 MHz clock
+        MOV.B   &CALBC1_1MHZ, &BCSCTL1
+        MOV.B   &CALDCO_1MHZ, &DCOCTL
+        
+        MOV.W   #TA_0_count, &TA0CCR0   ; setup T0 and interrupt
+        MOV.W   #TASSEL_2+MC_1, &TACTL
+        MOV.W   #CCIE, &TA0CCTL0
+        BIC.W   #TAIFG, &TA0CTL          ; clear interrupt flag 
+                
+        MOV.W   #TA_1_count, &TA1CCR0   ; setup T1 and interrupt
+        MOV.W   #TASSEL_2+ID_1+MC_1, &TA1CTL
+        MOV.W   #CCIE, &TA1CCTL0
+        BIC.W   #TAIFG, &TA1CTL         ; clear interrupt flag
+
+        CLR.B   &ten_ms                 ; make sure variables are cleared
+        CLR.B   &hund_ms
+        CLR.B   &seconds
+        CLR.B   &ten_sec
+        CLR.B   &countm
+        CLR.B   &PB1M
+        CLR.B   &PB2M
+        CLR.B   &PB3M
+        CLR.B   &CurrentDigit
+        
+        EINT
+;******************************************************************************
+main:   NOP                             ; main program       
+        
+        
+        BIC.B   #ALLD+COLN, &P1OUT
+        CMP.B   #0x01, &PB1M            ; check PB1 pushed flag
+        JEQ     PB1M_set
+        CMP.B   #0x01, &PB2M            ; check PB2 pushed flag                   
+        JEQ     PB2M_set
+        CMP.B   #0x01, &PB3M            ; check PB3 pushed flag
+        JEQ     PB3M_set
+        JMP     Done                   
+PB1M_set:                               ; set values when PB1 selected (rightmost)
+       
+        ; Ones place.
+        INC.B   &ten_ms                   ; Increment the ones place
+        CMP.B   #0xA, &ten_ms             ; Test to see if the 4th nibble overflowed
+        JNZ     return                  ; jump to the end if the bit did not overflow
+        MOV.B   #0x0, &ten_ms
+        ; Tens place.
+        INC.B   &hund_ms                   ; Increment the tens place.
+        CMP.B   #0xA, &hund_ms             ; Test to see if the 3rd overflowed
+        JNZ     return                  ; jump to the end if the bit did not overflow
+        MOV.B   #0x0, &hund_ms
+        ; Hundreds place.
+        INC.B   &seconds                   ; Increment the hundreds place.
+        CMP.B   #0xA, &seconds             ; Test to see if the 2nd nibble overflowed
+        JNZ     return                  ; jump to the end if the bit did not overflow
+        MOV.B   #0x0, &seconds
+        ; Thousands place.
+        INC.B   &ten_sec                   ; Increment the thousands place.
+        CMP.B   #0xA, &ten_sec             ; Test to see if the 1st nibble overflowed
+        JNZ     return                  ; jump to the end if the bit did not overflow
+        MOV.B   #0x0, &ten_sec             ; Mask off everything above the LS nibble
+
+        
+        
+        
+        CLR.B   &PB1M  ; setup is complete, reset pushed flag
+        JMP     Done
+PB2M_set:                               ; set values when PB2 selected (center)
+        MOV.B   &CurrentDigit, &ten_ms           ; ***for the stopwatch this will be stop
+        MOV.B   &CurrentDigit, &hund_ms
+        MOV.B   &CurrentDigit, &seconds
+        MOV.B   &CurrentDigit, &ten_sec
+        CLR.B   &PB2M                   ; setup is complete, reset pushed flag
+        JMP     Done
+PB3M_set:                               ; set values when PB3 selected (leftmost)
+        MOV.B   #0x0, &ten_ms           ; ***for the stopwatch, this will be reset
+        MOV.B   #0x0, &hund_ms
+        MOV.B   #0x0, &seconds
+        MOV.B   #0x0, &ten_sec
+        CLR.B   &PB3M                   ; setup is compelte reset pushed flag
+        JMP     Done
+     
+
+
+
+Done:   
+
+; After putting doCount here I realized that the display was having trouble with draw so I left it in the TA_1_ISR
+
+JMP     main        
+;*******************************************************************************
+;               END OF MAIN - SUBROUTINES
+;*******************************************************************************
+Draw:                                   ; code for drawing display
+        BIS.B   #ALLD, &P2OUT
+       
+        CMP.B   #0x0, &CurrentDigit     ; check which digit to display
+        JEQ     WriteDig1               ; only one digit displayed per interrupt
+        CMP.B   #0x1, &CurrentDigit
+        JEQ     WriteDig2
+        CMP.B   #0x2, &CurrentDigit
+        JEQ     WriteDig3
+        CMP.B   #0x3, &CurrentDigit
+        JEQ     WriteDig4
+WriteDig1:                              ; write digit one
+        BIS.B   #ALLD, &P2OUT
+        BIC.B   #DIS4, &P2OUT
+        MOV.B   &ten_ms, R4
+        MOV.B   ZERO(R4), &P1OUT         
+        JMP     DoneNow
+WriteDig2:                              ; write digit two
+        BIS.B   #ALLD, &P2OUT
+        BIC.B   #DIS3, &P2OUT
+        MOV.B   &hund_ms, R4
+        MOV.B   ZERO(R4), &P1OUT          
+        JMP     DoneNow
+WriteDig3:                              ; write digit three
+        BIS.B   #ALLD, &P2OUT
+        BIC.B   #DIS2, &P2OUT
+        MOV.B   &seconds, R4
+        MOV.B   ZERO(R4), &P1OUT        
+        JMP     DoneNow
+WriteDig4:                              ; write digit four
+        BIS.B   #ALLD, &P2OUT
+        BIC.B   #DIS1, &P2OUT
+        MOV.B   &ten_sec, R4
+        MOV.B   ZERO(R4), &P1OUT         
+        JMP     DoneNow
+DoneNow:                                ; writing is complete
+        INC.B   &CurrentDigit           
+        CMP.B   #0x4, &CurrentDigit     ; check to see if all digits have been displayed
+        JL      DoneWriting             ; if not skip reset of current digit
+        CLR.B   &CurrentDigit           ; if yes reset the current digit flag
+        XOR.B   #COLN, &P2OUT
+DoneWriting:
+        RET
+
+; Interrupts for P2 and Buttons                  
+Port_2_ISR:                             ; interrupt occured on P2 (Pushbuttons)
+        BIT.B   #PB1, &P2IFG            ; check which button was pressed
+        JNZ     PB1_set                 ; jump to corresponding case
+        BIT.B   #PB2, &P2IFG
+        JNZ     PB2_set
+        BIT.B   #PB3, &P2IFG
+        JNZ     PB3_set
+PB1_set:                                ; PB1 was pressed set flag
+        
+        BIS.B   #0x01, &PB1M
+        JMP     T0ISR_finish
+PB2_set:                                ; PB2 was pressed set flag
+        BIS.B   #0x01, &PB2M
+        JMP     T0ISR_finish
+PB3_set:                                ; PB3 was pressed set flag
+        BIS.B   #0x01, &PB3M    
+        JMP     T0ISR_finish
+T0ISR_finish:                           ; port interrupt finished clear flag
+        CLR.B   &P2IFG 
+        RETI
+
+; Timer 0 Interrupt which is used to display the digits on 7 segment      
+TA_0_ISR:                               ; interrupt occured TA_0
+        CALL    #Draw                   ; call draw function for display
+        RETI
+; Timer 1 Interrupt which contains the actual counter
+TA_1_ISR:                               
+        
+       ; Ones place.
+        INC.B   &ten_ms                   ; Increment the ones place
+        CMP.B   #0xA, &ten_ms             ; Test to see if the 4th nibble overflowed
+        JNZ     return                  ; jump to the end if the bit did not overflow
+        MOV.B   #0x0, &ten_ms
+        ; Tens place.
+        INC.B   &hund_ms                   ; Increment the tens place.
+        CMP.B   #0xA, &hund_ms             ; Test to see if the 3rd overflowed
+        JNZ     return                  ; jump to the end if the bit did not overflow
+        MOV.B   #0x0, &hund_ms
+        ; Hundreds place.
+        INC.B   &seconds                   ; Increment the hundreds place.
+        CMP.B   #0xA, &seconds             ; Test to see if the 2nd nibble overflowed
+        JNZ     return                  ; jump to the end if the bit did not overflow
+        MOV.B   #0x0, &seconds
+        ; Thousands place.
+        INC.B   &ten_sec                   ; Increment the thousands place.
+        CMP.B   #0xA, &ten_sec             ; Test to see if the 1st nibble overflowed
+        JNZ     return                  ; jump to the end if the bit did not overflow
+        MOV.B   #0x0, &ten_sec             ; Mask off everything above the LS nibble
+return:     RET
+
+        RETI
+        
+
+;*******************************************************************************
+;               7-SEGMENT DISPLAY VALUES
+;*******************************************************************************
+ZERO:   DC8    ~0x3F
+ONE:    DC8    ~0x06
+TWO:    DC8    ~0x5B
+THREE:  DC8    ~0x4F
+FOUR:   DC8    ~0x66
+FIVE:   DC8    ~0x6D
+SIX:    DC8    ~0x7D
+SEVEN:  DC8    ~0x07
+EIGHT:  DC8    ~0x7F
+NINE:   DC8    ~0x67
+
+        END
