@@ -1,0 +1,299 @@
+; Jibin Mathews
+; ECE 3362 002
+; Program is intended to use Internal temperature sensor in order to display the corresponding temp on the 7 seg display
+
+#include "msp430.h"                     ; include file
+        NAME    main                    ; module name
+        PUBLIC  main                    ; external visibility of main label
+;*******************************************************************************        
+                ORG    0x300		; define variables, located at memory XX
+ten_ms          DC8    0x300              ; 0x300
+hund_ms         DC8    0x301              ; 0x301                      
+sec         	DC8    0x302              ; 0x302
+ten_sec         DC8    0x303              ; ....
+PB1M            DC8    0x304 		; ...
+PB2M            DC8    0x305 		; ..
+
+CurrentDigit    DC8    0x306
+DisplayValue    DC16   0x307
+;*******************************************************************************                       
+        ORG     0FFFEh					
+        DC16    init                    ; reset vector to 'init' label
+        ORG     0xFFE6
+        DC16    Port_2_ISR              ; port 2 interrupt vector
+        ORG     0xFFF2
+        DC16    TA_0_ISR                ; timer 0 interrupt vector
+        ORG     0xFFFA
+        DC16    TA_1_ISR                ; timer 1 interrupt vector
+
+        RSEG    CSTACK                  ; pre-declaration of segment
+        RSEG    CODE                    ; place program in 'CODE' segment
+;*******************************************************************************                                                
+                                        ; define display (leftmost-1, rightmost-4)
+        #define DIS1    0x01 	
+        #define DIS2    0x02
+        #define DIS3    0x04
+        #define DIS4    0x08            
+        #define COLN    0x10            
+        #define ALLD    0x1F
+                                        ; define button locations on port
+        #define PB1     0x20     
+        #define PB2     0x80
+        
+                                        ; define timer count values
+        #define TA_0_count      2500
+        #define TA_1_count      50000
+                                        ; number of 0.1 s intervals in 1 s
+        #define max_count       10
+;*******************************************************************************
+;               PROGRAM START
+;*******************************************************************************
+                                        ; init code for setup (runs once)
+init:   
+
+
+
+        MOV     #SFE(CSTACK), SP        ; set up stack (end of RAM)
+        MOV.W   #WDTPW+WDTHOLD, &WDTCTL ; stop WDT
+        MOV.W   #0x0, R12
+        MOV.W   #0x0, R4
+        MOV.W   #REFON+SREF_1+ADC10SHT_3+ADC10ON,&ADC10CTL0 ; 64x sample and hold time, 
+        MOV.W   #INCH_10+ADC10DIV_7, &ADC10CTL1              ; set input channel to internal
+        BIS.W   #ENC+ADC10SC,&ADC10CTL0 ; Start sampling/conversion
+
+
+
+
+        MOV.B   #0xFF, &P1DIR           ; all P1 output
+        MOV.B   #ALLD, &P2DIR      ; lower 5 bits outputs (displays + colon)
+        MOV.B   #PB1+PB2, &P2REN    ; enable pullup/down resistor
+        MOV.B   #PB1+PB2, &P2OUT    ; set pullup resistor 
+
+        BIS.B   #0xFF, &P1OUT           ; clear character display (all off)
+        BIS.B   #ALLD, &P2OUT      ; clear all displays and colon
+
+        BIC.B   #0xFF, &P1SEL           ; all P1 GPIO mode
+        BIC.B   #0xFF, &P1SEL2          
+        BIC.B   #0xFF, &P2SEL           ; all P2 GPIO mode
+        BIC.B   #0xFF, &P2SEL2
+        
+        BIS.B   #PB1+PB2, &P2IE     ; enable P2 interrupt for buttons
+        BIS.B   #PB1+PB2, &P2IES
+        CLR.B   &P2IFG                  ; clear interrupt flag
+        
+        CLR.B   &DCOCTL;                ; setup calibrated 1 MHz clock
+        MOV.B   &CALBC1_1MHZ, &BCSCTL1
+        MOV.B   &CALDCO_1MHZ, &DCOCTL
+        
+        MOV.W   #TA_0_count, &TA0CCR0   ; setup T0 and interrupt
+        MOV.W   #TASSEL_2+MC_1, &TACTL
+        MOV.W   #CCIE, &TA0CCTL0
+        BIC.W   #TAIFG, &TA0CTL         ; clear interrupt flag 
+                
+        MOV.W   #TA_1_count, &TA1CCR0   ; setup T1 and interrupt
+        MOV.W   #TASSEL_2+ID_1+MC_1, &TA1CTL
+        MOV.W   #CCIE, &TA1CCTL0
+        BIC.W   #TAIFG, &TA1CTL         ; clear interrupt flag
+
+        CLR.B   &ten_ms                 ; ensure variables are cleared
+        CLR.B   &hund_ms
+        CLR.B   &sec
+        CLR.B   &ten_sec
+        CLR.B   &PB1M
+        CLR.B   &PB2M
+        CLR.B   &CurrentDigit
+        CLR.W   &DisplayValue
+        
+        EINT
+;******************************************************************************
+main:   NOP                             ; main program
+        BIS.W   #ENC+ADC10SC,&ADC10CTL0 ; Start sampling/conversion
+        CMP.B   #0x1, &PB1M             ; check PB1 pushed flag
+        JEQ     PB1M_set		; yes, go to PB1 mode set
+        CMP.B   #0x1, &PB2M             ; check PB2 pushed flag                
+        JEQ     PB2M_set		; yes, go to PB2 mode set
+        JMP     Done                   
+PB1M_set:       ; Change to Celsius
+        CALL    #Trans2TempC
+        CALL    #BIN2BCD4
+        MOV.W   R12, &DisplayValue
+        CLR.B   &PB1M                   ; setup is complete, reset pushed flag
+        JMP     Done
+PB2M_set:                               ; Change to Fahrenheit
+        CALL    #Trans2TempF
+        CALL    #BIN2BCD4
+        MOV.W   R11, &DisplayValue
+        CLR.B   &PB2M                   ; setup is complete, reset pushed flag
+        JMP     Done
+
+Done:   JMP     main 
+
+;*******************************************************************************
+;               END OF MAIN - SUBROUTINES
+;*******************************************************************************
+
+Trans2TempC: ; Change Temperature to celsius
+            MOV.W   &ADC10MEM,R12           ;
+            MOV.W   #423,R11                ; C
+            CALL    #MPYU             
+
+            BIC.W  #00FFh,R14              ; /1024
+            ADD.W   R15,R14                 ;
+            SWPB    R14                     ;
+            RRA.W   R14                     ;
+            RRA.W   R14                     ;
+            MOV.W   R14,R12                 ;
+            SUB.W  #278,R12                ; C
+            MOV.W   &DisplayValue, R4
+            AND.W   #0xF, R4
+            MOV.B   LC, &P1OUT
+            BIC.B   #DIS4, &P2OUT
+        
+            RET                             ;
+
+Trans2TempF: ; Change Temperature unit to F
+
+            MOV.W   &ADC10MEM,R12           ;
+            MOV.W   #761,R11                ; F
+            CALL    #MPYU                   ;
+            BIC.W  #00FFh,R14              ; /1024
+            ADD.W   R15,R14                 ;
+            SWPB    R14                     ;
+            RRA.W   R14                     ;
+            RRA.W   R14                     ;
+            MOV.W   R14,R12                 ;
+            SUB.W   #468,R12                ; F
+            MOV.W   &DisplayValue, R4
+            AND.W   #0xF, R4
+            MOV.B   LF, &P1OUT
+            BIC.B   #DIS4, &P2OUT
+            RET   
+            
+BIN2BCD4:        
+            MOV.W   #16,R15                 ; Loop Counter
+            CLR.W   R13                     ; 0 -> RESULT LSD
+
+BIN1        RLA.W   R12                     ; Binary MSB to carry
+            DADD.W  R13,R13                 ; RESULT x2 LSD
+            DEC.W   R15                     ; Through?
+            JNZ    BIN1                    ; Not through
+            RET
+            
+                          
+MPYU
+            CLR.W   R14                     ; 0 -> Clear least sig bit
+            CLR.W   R15                     ; 0 -> MSBs result
+
+MACU        CLR.W   R13                     ; MSBs multiplier
+            MOV.W   #1,R10                  ; bit test register
+
+
+MPY1       RLA.W   R12                     ; multiplier x 2
+            RLC.W   R13                     ;
+            RLA.W   R10                     ; next bit to test
+            JNC     MPY2                    ; if bit in carry: finished
+            RET       
+
+MPY2       BIT.W   R10,R11                 ; test actual bit
+            JZ      MPY1                    ; IF 0: do nothing
+            ADD.W   R12,R14                 ; IF 1: add multiplier to result
+            ADDC.W R13,R15                 ;
+
+
+Draw:                                   ; code for drawing display
+        BIS.B   #ALLD, &P2OUT
+       
+        ; Digit 1 is used within the subroutines depending on Celsius or Fahrenheit
+        CMP.B   #0x1, &CurrentDigit
+        JEQ     WriteDig2
+        CMP.B   #0x2, &CurrentDigit
+        JEQ     WriteDig3
+        CMP.B   #0x3, &CurrentDigit
+        JEQ     WriteDig4
+        CMP.B   #0x4, &CurrentDigit
+        JEQ     WriteColon
+
+WriteDig2:                              ; write digit two, CurrentDigit=1
+        MOV.W   &DisplayValue, R4
+        AND.W   #0xF0, R4
+        RRA     R4
+        RRA     R4
+        RRA     R4
+        RRA     R4
+        MOV.B   ZERO(R4), &P1OUT
+        BIC.B   #DIS3, &P2OUT
+        JMP     DoneWrite
+WriteDig3:                              ; write digit three, CurrentDigit=2
+        MOV.W   &DisplayValue, R4
+        AND.W   #0xF00, R4
+        SWPB    R4
+        MOV.B   ZERO(R4), &P1OUT
+        BIC.B   #DIS2, &P2OUT
+        JMP     DoneWrite
+WriteDig4:                              ; Displays C or F
+        MOV.W   &DisplayValue, R4
+        AND.W   #0xF000, R4
+        SWPB    R4
+        RRA     R4
+        RRA     R4
+        RRA     R4
+        RRA     R4
+        MOV.B   ZERO(R4), &P1OUT
+        BIC.B   #DIS1, &P2OUT
+        JMP     DoneWrite
+WriteColon:                             ; 
+        MOV.B   #0x90, &P1OUT           ; Change the FE to other values to test. 
+        BIC.B   #COLN, &P2OUT
+        JMP     DoneWrite
+DoneWrite:                              ; writing is complete
+        INC.B   &CurrentDigit           
+        CMP.B   #0x5, &CurrentDigit     ; check to see if all digits have been displayed
+        JL      DoneDraw                ; if not, skip and go to DoneDraw
+        CLR.B   &CurrentDigit           ; if yes, start over with first digit
+DoneDraw:
+        RET
+;*******************************************************************************  
+;               INTERRUPT SERVICE ROUTINES
+;*******************************************************************************                      
+Port_2_ISR:                             ; interrupt occured on P2 (Pushbuttons)
+        BIT.B   #PB1, &P2IFG            ; check which button was pressed
+        JNZ     PB1_set                 ; jump to corresponding case
+        BIT.B   #PB2, &P2IFG
+        JNZ     PB2_set
+        
+PB1_set:                                ; PB1 was pressed set flag
+        BIS.B   #0x1, &PB1M
+        JMP     T0ISR_finish
+PB2_set:                                ; PB2 was pressed set flag
+        BIS.B   #0x1, &PB2M
+        JMP     T0ISR_finish
+        
+T0ISR_finish:                           ; port interrupt finished clear flag
+        CLR.B   &P2IFG 
+        RETI
+;*******************************************************************************        
+TA_0_ISR:                               ; interrupt occured TA_0
+        CALL    #Draw                   ; call draw function for display
+        RETI
+;*******************************************************************************        
+TA_1_ISR:                               ; interrupt occured TA_1
+        ;INC.B   &hund_ms               ; timer updates every 0.1 s 
+                                        ; likely need to do something here
+        RETI
+;*******************************************************************************
+;               7-SEGMENT DISPLAY VALUES
+;*******************************************************************************
+ZERO:   DC8    ~0x3F
+ONE:    DC8    ~0x06
+TWO:    DC8    ~0x5B
+THREE:  DC8    ~0x4F
+FOUR:   DC8    ~0x66
+FIVE:   DC8    ~0x6D
+SIX:    DC8    ~0x7D
+SEVEN:  DC8    ~0x07
+EIGHT:  DC8    ~0x7F
+NINE:   DC8    ~0x67
+LC:     DC8    ~0x39
+LF:     DC8    ~0x71
+
+        END

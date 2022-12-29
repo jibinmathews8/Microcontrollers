@@ -1,0 +1,86 @@
+#include "msp430.h"                     ; #define controlled include file
+
+        NAME    main                    ; module name
+
+        PUBLIC  main                    ; make the main label vissible
+                                        ; outside this module
+        ORG     0FFFEh
+        DC16    init                    ; set reset vector to 'init' label
+
+        RSEG    CSTACK                  ; pre-declaration of segment
+        RSEG    CODE                    ; place program in 'CODE' segment
+
+       ; BIS.B #08h,&ADC10MEM
+init:   MOV     #SFE(CSTACK), SP        ; set up stack
+        MOV.W   #0x0, R12
+        MOV.W   #0x0, R4
+
+        MOV.W   #REFON+SREF_1+ADC10SHT_3+ADC10ON,&ADC10CTL0 ; 64x sample and hold time, 
+        MOV.W   #INCH_10+ADC10DIV_7, &ADC10CTL1              ; set input channel to internal
+        BIS.W   #ENC+ADC10SC,&ADC10CTL0 ; Start sampling/conversion
+main:   NOP                             ; main program
+        MOV.W   #WDTPW+WDTHOLD,&WDTCTL  ; Stop watchdog timer4
+
+        CALL    #Trans2TempF
+        CALL    #BIN2BCD4
+        CALL    #Trans2TempC
+        CALL    #BIN2BCD4
+        
+        JMP main                           ; jump to current location '$'
+                                        ; (endless loop)
+        
+        
+                     ; jump to current location '$'
+                                        ; (endless loop)
+Trans2TempC:
+            mov.w   &ADC10MEM,R12           ;
+            mov.w   #423,R11                ; C
+            call    #MPYU                   ;
+            bic.w   #00FFh,R14              ; /1024
+            add.w   R15,R14                 ;
+            swpb    R14                     ;
+            rra.w   R14                     ;
+            rra.w   R14                     ;
+            mov.w   R14,R12                 ;
+            sub.w   #278,R12                ; C
+            ret                             ;
+
+Trans2TempF:
+
+            mov.w   &ADC10MEM,R12           ;
+            mov.w   #761,R11                ; F
+            call    #MPYU                   ;
+            bic.w   #00FFh,R14              ; /1024
+            add.w   R15,R14                 ;
+            swpb    R14                     ;
+            rra.w   R14                     ;
+            rra.w   R14                     ;
+            mov.w   R14,R12                 ;
+            sub.w   #468,R12                ; F
+         ret    
+         
+BIN2BCD4:        
+            mov.w   #16,R15                 ; Loop Counter
+            clr.w   R13                     ; 0 -> RESULT LSD
+BIN1        rla.w   R12                     ; Binary MSB to carry
+            dadd.w  R13,R13                 ; RESULT x2 LSD
+            dec.w   R15                     ; Through?
+            jnz     BIN1                    ; Not through
+            ret   
+MPYU:
+            clr.w   R14                     ; 0 -> LSBs result
+            clr.w   R15                     ; 0 -> MSBs result
+MACU        clr.w   R13                     ; MSBs multiplier
+            mov.w   #1,R10                  ; bit test register
+MPY2        bit.w   R10,R11                 ; test actual bit
+            jz      MPY1                    ; IF 0: do nothing
+            add.w   R12,R14                 ; IF 1: add multiplier to result
+            addc.w  R13,R15                 ;
+MPY1        rla.w   R12                     ; multiplier x 2
+            rlc.w   R13                     ;
+            rla.w   R10                     ; next bit to test
+            jnc     MPY2                    ; if bit in carry: finished
+            ret      
+
+
+ END
